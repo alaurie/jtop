@@ -1,6 +1,6 @@
 # AGENTS.md - jtop Developer & Agent Guide
 
-`jtop` is a terminal-based monitoring utility (htop/btop for the JVM) specifically designed for inspecting Java Virtual Machines running on Java 21–25+. It uses [TamboUI](https://tamboui.dev) for its TUI framework, leverages Java 25 features (`Gatherers`, Record Patterns, Virtual Threads), and provides real-time monitoring of local, containerized (Docker/Kubernetes), and remote JVM processes.
+`jtop` is a terminal-based monitoring utility (htop/btop for the JVM) specifically designed for inspecting Java Virtual Machines running on Java 21–25+. It uses [TamboUI](https://tamboui.dev) for its TUI framework, leverages Java 25 features (`Gatherers`, Record Patterns, Virtual Threads, `var` type inference, JEP 467 Markdown Javadoc), and provides real-time monitoring of local, containerized (Docker/Kubernetes), and remote JVM processes over SSH.
 
 ---
 
@@ -27,15 +27,20 @@
   - `RateGatherer.java`: Custom Java 25 `Gatherer` computing rates per second from cumulative counters.
 - **`org.alaurie.jtop.model`**:
   - Immutable Java records: `JvmProcess`, `JvmMetricsSnapshot`, `ThreadSnapshot`, `GcSnapshot`, `MemoryPoolSnapshot`, `BufferPoolSnapshot`, `JvmRuntimeInfo`, `FrameworkInfo`, `MetricHistory`.
+
 ---
 
-## 2. Core Invariants & Rules for AI Agents
+## 2. Core Technical Invariants & Java 25 Idioms
 
-When editing or extending `jtop`, you MUST follow these invariants:
+When editing or extending `jtop`, you MUST adhere to modern Java 25 language features and design guidelines:
 
-1. **Java 25 Target & Preview Features**:
-   - `build.gradle` targets Java 25 (`options.compilerArgs += ['--enable-preview']`).
-   - Maintain Preview feature flags (`--enable-preview`, `--enable-native-access=ALL-UNNAMED`) in compiler and test configurations.
+1. **Modern Java 25 Idioms & Language Standards**:
+   - **`var` Local Variable Type Inference**: Use `var` for local variables where type is clear from assignment.
+   - **Java 25 Stream Gatherers (`java.util.stream.Gatherers`)**: Use `Gatherers.windowSliding()` for sliding window telemetry and custom `Gatherer` implementations (`RateGatherer`).
+   - **Record Patterns & Pattern Matching**: Use record patterns in `switch` expressions and `instanceof` checks.
+   - **Virtual Threads (`Thread.ofVirtual()`)**: Use Virtual Threads (`Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())`) for background polling.
+   - **JEP 467 Markdown Documentation Comments**: Write Javadoc comments using `///` Markdown syntax.
+   - **Immutable Records**: Use Java `record` types for all domain models.
 
 2. **Zero-Overhead Polling**:
    - Routine 250ms polling in `JvmMonitorService.pollSnapshot()` MUST fetch thread info at **depth 0** (`getThreadInfo(threadIds, 0)`).
@@ -56,7 +61,7 @@ When editing or extending `jtop`, you MUST follow these invariants:
 
 ## 3. Verification & Build Commands
 
-Always run build and test verification before delivering changes:
+Always run build and test verification before committing changes:
 
 - **Build Application Binary**:
   ```bash

@@ -6,7 +6,7 @@
 
 `jtop` is a terminal-based monitoring utility (like `htop` / `btop`) specifically designed for inspecting Java Virtual Machines running on Java 21–25+. 
 
-Built on the **[TamboUI](https://tamboui.dev)** terminal framework and Java 25 features (`Gatherers`, Record Patterns, Virtual Threads), `jtop` delivers instant, real-time diagnostic insights for local, containerized (Docker & Kubernetes), and remote JVM processes over SSH—with **zero desktop GUI dependencies**.
+Built on the **[TamboUI](https://tamboui.dev)** terminal framework and modern **Java 25** features (Stream `Gatherers`, Record Patterns, Virtual Threads, `var` type inference, JEP 467 Markdown Javadoc), `jtop` delivers instant, real-time diagnostic insights for local, containerized (Docker & Kubernetes), and remote JVM processes over SSH—with **zero desktop GUI dependencies**.
 
 ---
 
@@ -16,6 +16,12 @@ Built on the **[TamboUI](https://tamboui.dev)** terminal framework and Java 25 f
   * 7 interactive views with responsive terminal scaling (adapting from 80x24 SSH windows to 200+ column ultrawides).
   * High-resolution sparkline waveform graphs (` ▂▃▄▅▆▇█`) for CPU load and GC pause trends.
   * Multi-segment progress bars showing Used vs. Committed vs. Uncommitted Heap Memory.
+
+* **🚀 Powered by Modern Java 25 Language Features**:
+  * **Java 25 Stream Gatherers**: Uses `Gatherers.windowSliding()` and custom `Gatherer` instances (`RateGatherer`) for sliding window telemetry.
+  * **Project Loom Virtual Threads**: Non-blocking background telemetry polling using `Thread.ofVirtual()`.
+  * **`var` & Record Patterns**: Clean type inference and pattern matching in `switch` and `instanceof`.
+  * **JEP 467 Markdown Javadoc**: Documentation comments written using native `///` Markdown syntax.
 
 * **🛡️ Zero-Overhead Polling Protection**:
   * Routine background polling reads scalar MBeans at **depth 0** (`getThreadInfo(ids, 0)`), preventing GC safepoint pauses during routine polling.
@@ -106,14 +112,14 @@ This generates the standalone binary under `./build/install/jtop/bin/jtop`.
   ./build/install/jtop/bin/jtop --jmx 127.0.0.1:9999
   ```
 
+- **Connect over SSH (using 1Password Agent or SSH keys)**:
+  ```bash
+  ./build/install/jtop/bin/jtop ssh://admin@10.0.1.50:22
+  ```
+
 - **Launch with Dracula color theme and clean ASCII fallback**:
   ```bash
   ./build/install/jtop/bin/jtop --theme dracula --ascii
-  ```
-
-- **Run CLI via Gradle**:
-  ```bash
-  ./gradlew run -q --console=plain --args="--pid 12345"
   ```
 
 ---
@@ -150,4 +156,4 @@ Run the complete unit and integration test suite:
 
 * **[TamboUI 0.4.0](https://tamboui.dev)** - Modern, Java-native TUI framework inspired by ratatui.
 * **JLine 3.28.0** - Terminal backend and raw PTY interaction layer.
-* **Java 25** - Preview features (`Gatherers`, Record Patterns, Virtual Threads, Pattern Matching).
+* **Java 25** - Preview features (`Gatherers`, Record Patterns, Virtual Threads, `var` type inference, JEP 467 Markdown Javadoc).

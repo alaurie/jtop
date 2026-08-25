@@ -1,0 +1,60 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += [
+        '--enable-preview',
+        '-Xlint:deprecation',
+        '--add-modules', 'jdk.attach,jdk.management,java.management,jdk.jfr'
+    ]
+}
+
+application {
+    mainClass = 'org.alaurie.jtop.Main'
+    applicationDefaultJvmArgs = [
+        '--enable-preview',
+        '--enable-native-access=ALL-UNNAMED',
+        '-Djdk.attach.allowAttachSelf=true',
+        '--add-exports=jdk.attach/sun.tools.attach=ALL-UNNAMED',
+        '--add-opens=jdk.attach/sun.tools.attach=ALL-UNNAMED'
+    ]
+}
+
+tasks.named('run', JavaExec) {
+    standardInput = System.in
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.withType(Test).configureEach {
+    jvmArgs(
+        '--enable-preview',
+        '--enable-native-access=ALL-UNNAMED',
+        '-Djdk.attach.allowAttachSelf=true',
+        '--add-exports=jdk.attach/sun.tools.attach=ALL-UNNAMED',
+        '--add-opens=jdk.attach/sun.tools.attach=ALL-UNNAMED'
+    )
+}
+
+dependencies {
+    implementation 'org.jline:jline:3.28.0'
+    implementation 'dev.tamboui:tamboui-tui:0.4.0'
+    implementation 'dev.tamboui:tamboui-jline3-backend:0.4.0'
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}

@@ -19,13 +19,13 @@ public class Main {
         String jmxUrl = null;
         String sshKeyPath = null;
         long intervalMs = 500;
-        Theme theme = Theme.BTOP;
-        boolean asciiOnly = false;
+        var theme = Theme.BTOP;
+        var asciiOnly = false;
 
         JTopLogger.info("Starting jtop terminal monitor...");
 
-        for (int i = 0; i < args.length; i++) {
-            String arg = args[i];
+        for (var i = 0; i < args.length; i++) {
+            var arg = args[i];
             if (arg.equals("--pid") || arg.equals("-p")) {
                 if (i + 1 < args.length) {
                     try {
@@ -44,7 +44,7 @@ public class Main {
                     sshKeyPath = args[++i];
                 }
             } else if (arg.startsWith("ssh://")) {
-                SshMonitorService.SshCredentials creds = SshMonitorService.parseSshUrl(arg, sshKeyPath);
+                var creds = SshMonitorService.parseSshUrl(arg, sshKeyPath);
                 jmxUrl = creds.host() + ":9999";
                 JTopLogger.info("Parsed SSH remote URL target: " + creds.host() + ":" + creds.port());
             } else if (arg.equals("--interval") || arg.equals("-i")) {
@@ -70,8 +70,8 @@ public class Main {
 
         System.setProperty("jdk.attach.allowAttachSelf", "true");
 
-        try (JTopApp app = new JTopApp(targetPid, jmxUrl, intervalMs, theme, asciiOnly);
-             TuiRunner runner = TuiRunner.create(TuiConfig.builder().tickRate(Duration.ofMillis(100)).build())) {
+        try (var app = new JTopApp(targetPid, jmxUrl, intervalMs, theme, asciiOnly);
+             var runner = TuiRunner.create(TuiConfig.builder().tickRate(Duration.ofMillis(100)).build())) {
             runner.run(app, app);
         } catch (Exception e) {
             JTopLogger.error("Fatal error running jtop: " + e.getMessage(), e);
@@ -109,8 +109,7 @@ public class Main {
               7 / F7                 Spring Boot & Quarkus Telemetry (HikariCP / Agroal / Loggers)
               ← / →                  Switch active Tabs
               Enter                  Inspect Stack Trace & Lock Owner (Threads / JFR Views)
-              h                      Trigger Live HotSpot .hprof Heap Dump
-              m                      Toggle HotSpot Diagnostic VM Options Tuning Modal
+              f                      Cycle JFR Event Category Filter (JFR View)
               t                      Cycle Color Theme live (btop -> dracula -> nord -> solarized)
               g                      Trigger Manual System.gc() (GC View)
               /                      Search/Filter processes or threads

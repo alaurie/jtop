@@ -19,19 +19,19 @@ public class SshMonitorService {
     ) {}
 
     public static SshCredentials parseSshUrl(String sshUrl, String customKeyPath) {
-        String cleaned = sshUrl.replace("ssh://", "");
-        String user = System.getProperty("user.name", "root");
-        String host = "localhost";
-        int port = 22;
+        var cleaned = sshUrl.replace("ssh://", "");
+        var user = System.getProperty("user.name", "root");
+        var host = "localhost";
+        var port = 22;
 
         if (cleaned.contains("@")) {
-            String[] parts = cleaned.split("@", 2);
+            var parts = cleaned.split("@", 2);
             user = parts[0];
             cleaned = parts[1];
         }
 
         if (cleaned.contains(":")) {
-            String[] hostPort = cleaned.split(":", 2);
+            var hostPort = cleaned.split(":", 2);
             host = hostPort[0];
             try {
                 port = Integer.parseInt(hostPort[1]);
@@ -40,22 +40,22 @@ public class SshMonitorService {
             host = cleaned;
         }
 
-        String agentSocket = System.getenv("SSH_AUTH_SOCK");
-        boolean useAgent = agentSocket != null && !agentSocket.isBlank() && Files.exists(Path.of(agentSocket));
+        var agentSocket = System.getenv("SSH_AUTH_SOCK");
+        var useAgent = agentSocket != null && !agentSocket.isBlank() && Files.exists(Path.of(agentSocket));
 
-        String keyPath = customKeyPath != null ? customKeyPath : discoverDefaultKeyPath();
+        var keyPath = customKeyPath != null ? customKeyPath : discoverDefaultKeyPath();
 
         return new SshCredentials(host, port, user, keyPath, agentSocket, useAgent);
     }
 
     private static String discoverDefaultKeyPath() {
-        String home = System.getProperty("user.home", "");
-        List<String> candidates = List.of(
+        var home = System.getProperty("user.home", "");
+        var candidates = List.of(
             home + "/.ssh/id_ed25519",
             home + "/.ssh/id_rsa",
             home + "/.ssh/id_ecdsa"
         );
-        for (String candidate : candidates) {
+        for (var candidate : candidates) {
             if (Files.exists(Path.of(candidate))) {
                 return candidate;
             }
@@ -64,7 +64,7 @@ public class SshMonitorService {
     }
 
     public static List<String> getAvailableAuthMethods(SshCredentials creds) {
-        List<String> methods = new ArrayList<>();
+        var methods = new ArrayList<String>();
         if (creds.useAgent()) {
             methods.add("1Password / OpenSSH Agent (" + creds.agentSocketPath() + ")");
         }

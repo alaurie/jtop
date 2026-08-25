@@ -107,14 +107,14 @@ This generates the standalone binary under `./build/install/jtop/bin/jtop`.
   ./build/install/jtop/bin/jtop --pid 12345
   ```
 
+- **Connect over SSH (using 1Password Agent or SSH keys)**:
+  ```bash
+  ./build/install/jtop/bin/jtop -s admin@10.0.1.50:22
+  ```
+
 - **Connect to a remote production JVM via JMX TCP**:
   ```bash
   ./build/install/jtop/bin/jtop --jmx 127.0.0.1:9999
-  ```
-
-- **Connect over SSH (using 1Password Agent or SSH keys)**:
-  ```bash
-  ./build/install/jtop/bin/jtop ssh://admin@10.0.1.50:22
   ```
 
 - **Launch with Dracula color theme and clean ASCII fallback**:
@@ -131,13 +131,14 @@ Usage:
   jtop [options] [ssh://user@host:port]
 
 Options:
-  -p, --pid <PID>        Target JVM process ID (default: self)
-  -j, --jmx <HOST:PORT>  Connect to remote JVM via JMX TCP URL (e.g. localhost:9999)
-  -k, --key <PATH>       Path to SSH private key (default: 1Password Agent / ~/.ssh/id_ed25519)
-  -i, --interval <MS>    Polling interval in milliseconds (default: 500, min: 100)
-  -t, --theme <THEME>    Color palette theme: btop (default), dracula, nord, solarized
-  -a, --ascii            Force clean ASCII rendering (disables Unicode/emojis)
-  -h, --help             Show help message
+  -p, --pid <PID>         Target JVM process ID (default: self)
+  -s, --ssh <USER@HOST>   Connect to remote host over SSH (e.g. admin@10.0.1.50:22 or ssh://user@host)
+  -j, --jmx <HOST:PORT>   Connect to remote JVM via JMX TCP URL (e.g. localhost:9999)
+  -k, --key <PATH>        Path to SSH private key (default: 1Password Agent / ~/.ssh/id_ed25519)
+  -i, --interval <MS>     Polling interval in milliseconds (default: 500, min: 100)
+  -t, --theme <THEME>     Color palette theme: btop (default), dracula, nord, solarized
+  -a, --ascii             Force clean ASCII rendering (disables Unicode/emojis)
+  -h, --help              Show help message
 ```
 
 ---

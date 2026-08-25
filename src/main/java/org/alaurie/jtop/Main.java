@@ -35,6 +35,13 @@ public class Main {
                         System.exit(1);
                     }
                 }
+            } else if (arg.equals("--ssh") || arg.equals("-s")) {
+                if (i + 1 < args.length) {
+                    var sshArg = args[++i];
+                    var creds = SshMonitorService.parseSshUrl(sshArg, sshKeyPath);
+                    jmxUrl = creds.host() + ":9999";
+                    JTopLogger.info("Parsed SSH target: " + creds.user() + "@" + creds.host() + ":" + creds.port());
+                }
             } else if (arg.equals("--jmx") || arg.equals("-j")) {
                 if (i + 1 < args.length) {
                     jmxUrl = args[++i];
@@ -86,13 +93,14 @@ public class Main {
               jtop [options] [ssh://user@host:port]
             
             Options:
-              -p, --pid <PID>        Target JVM process ID (default: self)
-              -j, --jmx <HOST:PORT>  Connect to remote JVM via JMX TCP URL (e.g. localhost:9999)
-              -k, --key <PATH>       Path to SSH private key (default: 1Password Agent / ~/.ssh/id_ed25519)
-              -i, --interval <MS>    Polling interval in milliseconds (default: 500, min: 100)
-              -t, --theme <THEME>    Color palette theme: btop (default), dracula, nord, solarized
-              -a, --ascii            Force clean ASCII rendering (disables Unicode/emojis)
-              -h, --help             Show this help message
+              -p, --pid <PID>         Target JVM process ID (default: self)
+              -s, --ssh <USER@HOST>   Connect to remote host over SSH (e.g. admin@10.0.1.50:22 or ssh://user@host)
+              -j, --jmx <HOST:PORT>   Connect to remote JVM via JMX TCP URL (e.g. localhost:9999)
+              -k, --key <PATH>        Path to SSH private key (default: 1Password Agent / ~/.ssh/id_ed25519)
+              -i, --interval <MS>     Polling interval in milliseconds (default: 500, min: 100)
+              -t, --theme <THEME>     Color palette theme: btop (default), dracula, nord, solarized
+              -a, --ascii             Force clean ASCII rendering (disables Unicode/emojis)
+              -h, --help              Show this help message
             
             SSH Auth Support:
               - 1Password / OpenSSH Agent (via SSH_AUTH_SOCK)
@@ -109,7 +117,6 @@ public class Main {
               7 / F7                 Spring Boot & Quarkus Telemetry (HikariCP / Agroal / Loggers)
               ← / →                  Switch active Tabs
               Enter                  Inspect Stack Trace & Lock Owner (Threads / JFR Views)
-              f                      Cycle JFR Event Category Filter (JFR View)
               t                      Cycle Color Theme live (btop -> dracula -> nord -> solarized)
               g                      Trigger Manual System.gc() (GC View)
               /                      Search/Filter processes or threads

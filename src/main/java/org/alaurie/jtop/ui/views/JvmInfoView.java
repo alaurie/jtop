@@ -13,19 +13,32 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import dev.tamboui.tui.event.KeyEvent;
 import org.alaurie.jtop.model.JvmMetricsSnapshot;
 import org.alaurie.jtop.model.JvmProcess;
 import org.alaurie.jtop.model.JvmRuntimeInfo;
+import org.alaurie.jtop.ui.JTopApp;
+import org.alaurie.jtop.ui.style.UiFormatter;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /// View inspecting JVM Flags, System Specs, File Descriptors, Class Loading, and System Properties with dynamic height allocation.
-public class JvmInfoView {
+public class JvmInfoView implements View {
 
     private final TableState flagsTableState = new TableState();
     private final TableState propsTableState = new TableState();
+
+    @Override
+    public void render(Rect area, Buffer buffer, ViewContext ctx) {
+        render(area, buffer, ctx.currentProcess(), ctx.currentMetrics());
+    }
+
+    @Override
+    public boolean handleKey(KeyEvent keyEvent, ViewContext ctx, JTopApp app) {
+        return false;
+    }
 
     public void render(Rect area, Buffer buffer, JvmProcess process, JvmMetricsSnapshot metrics) {
         JvmRuntimeInfo info = metrics != null ? metrics.runtimeInfo() : null;
@@ -185,16 +198,11 @@ public class JvmInfoView {
     }
 
     private String formatBytes(long bytes) {
-        if (bytes <= 0) return "N/A";
-        if (bytes < 1024) return bytes + " B";
-        int exp = (int) (Math.log(bytes) / Math.log(1024));
-        char pre = "KMGTPE".charAt(exp - 1);
-        return String.format("%.1f %cB", bytes / Math.pow(1024, exp), pre);
+        return UiFormatter.formatBytes(bytes);
     }
 
+
     private String truncate(String val, int max) {
-        if (val == null) return "";
-        if (val.length() <= max) return val;
-        return val.substring(0, max - 3) + "...";
+        return UiFormatter.truncate(val, max);
     }
 }

@@ -13,14 +13,18 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
 import org.alaurie.jtop.model.JvmProcess;
+import org.alaurie.jtop.ui.JTopApp;
+import org.alaurie.jtop.ui.style.UiFormatter;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /// Btop-style View for discovering and selecting local or containerized JVM processes.
-public class ProcessListView {
+public class ProcessListView implements View {
 
     private final TableState tableState = new TableState();
     private String filterQuery = "";
@@ -162,8 +166,45 @@ public class ProcessListView {
     }
 
     private String truncate(String val, int max) {
-        if (val == null) return "";
-        if (val.length() <= max) return val;
-        return val.substring(0, max - 3) + "...";
+        return UiFormatter.truncate(val, max);
+    }
+
+    @Override
+    public void render(Rect area, Buffer buffer, ViewContext context) {
+        render(area, buffer);
+    }
+
+    @Override
+    public boolean handleKey(KeyEvent keyEvent, ViewContext context, JTopApp app) {
+        if (isFiltering) {
+            if (keyEvent.isKey(KeyCode.ESCAPE)) {
+                clearFilter();
+            } else if (keyEvent.isKey(KeyCode.BACKSPACE)) {
+                backspaceFilter();
+            } else if (keyEvent.isKey(KeyCode.ENTER)) {
+                isFiltering = false;
+            } else if (keyEvent.code() == KeyCode.CHAR && keyEvent.codePoint() != 0) {
+                appendFilterChar((char) keyEvent.codePoint());
+            }
+            return true;
+        }
+
+        if (keyEvent.isChar('/')) {
+            isFiltering = true;
+            return true;
+        } else if (keyEvent.isKey(KeyCode.UP)) {
+            moveSelectionUp();
+            return true;
+        } else if (keyEvent.isKey(KeyCode.DOWN)) {
+            moveSelectionDown();
+            return true;
+        } else if (keyEvent.isKey(KeyCode.ENTER)) {
+            JvmProcess selected = getSelectedProcess();
+            if (selected != null) {
+                app.attachToProcess(selected);
+            }
+            return true;
+        }
+        return false;
     }
 }

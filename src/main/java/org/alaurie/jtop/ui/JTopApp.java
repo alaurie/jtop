@@ -30,11 +30,13 @@ import org.alaurie.jtop.service.JvmDiscoveryService;
 import org.alaurie.jtop.service.JvmMonitorService;
 import org.alaurie.jtop.ui.style.Glyph;
 import org.alaurie.jtop.ui.style.Theme;
+import org.alaurie.jtop.ui.style.UiFormatter;
 import org.alaurie.jtop.ui.views.*;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
@@ -80,6 +82,9 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
     private final JfrEventsView jfrEventsView = new JfrEventsView();
     private final FrameworkView frameworkView = new FrameworkView();
 
+    private final Map<ViewState, View> views = new EnumMap<>(ViewState.class);
+    private Tabs lastTabsWidget;
+
     private JvmProcess currentProcess;
     private volatile JvmMetricsSnapshot currentMetrics;
     private volatile MetricHistory currentHistory;
@@ -105,6 +110,14 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
         this.pollIntervalMs = Math.max(100, pollIntervalMs);
         this.currentTheme = theme != null ? theme : Theme.BTOP;
         Glyph.setAsciiOnly(asciiOnly);
+
+        views.put(ViewState.PROCESS_LIST, processListView);
+        views.put(ViewState.DASHBOARD, dashboardView);
+        views.put(ViewState.THREADS, threadView);
+        views.put(ViewState.GC, gcView);
+        views.put(ViewState.JVM_INFO, jvmInfoView);
+        views.put(ViewState.JFR_EVENTS, jfrEventsView);
+        views.put(ViewState.FRAMEWORK, frameworkView);
 
         refreshProcessList();
 
@@ -189,12 +202,21 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
         }
     }
 
-    private void switchView(ViewState viewState) {
+    public void switchView(ViewState viewState) {
         this.activeView = viewState;
         this.tabsState.select(viewState.getTabIndex());
         if (viewState == ViewState.PROCESS_LIST) {
             refreshProcessList();
         }
+    }
+
+    public JvmMonitorService getMonitorService() { return monitorService; }
+
+    public ThreadView getThreadView() { return threadView; }
+
+    private ViewContext buildContext(Tabs tabs, TabsState ts) {
+        return new ViewContext(currentProcess, currentMetrics, currentHistory,
+            currentTheme, tabs, ts, monitorService);
     }
 
     @Override
@@ -282,124 +304,20 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
         }
 
         // View-Specific Key Handling
-        switch (activeView) {
-            case PROCESS_LIST -> handleProcessListKeys(keyEvent);
-            case DASHBOARD -> handleDashboardKeys(keyEvent);
-            case THREADS -> handleThreadKeys(keyEvent);
-            case GC -> handleGcKeys(keyEvent);
-            case JVM_INFO -> handleJvmInfoKeys(keyEvent);
-            case JFR_EVENTS -> handleJfrEventsKeys(keyEvent);
-            case FRAMEWORK -> handleFrameworkKeys(keyEvent);
+        var ctx = buildContext(lastTabsWidget, tabsState);
+        var view = views.get(activeView);
+        if (view != null) {
+            view.handleKey(keyEvent, ctx, this);
+            // pick up FrameworkView status message
+            if (activeView == ViewState.FRAMEWORK) {
+                String msg = frameworkView.pollStatusMessage();
+                if (msg != null) this.connectionStatusMessage = msg;
+            }
         }
 
         return true;
     }
 
-    private void handleProcessListKeys(KeyEvent keyEvent) {
-        if (processListView.isFiltering()) {
-            if (keyEvent.isKey(KeyCode.ESCAPE)) {
-                processListView.clearFilter();
-            } else if (keyEvent.isKey(KeyCode.BACKSPACE)) {
-                processListView.backspaceFilter();
-            } else if (keyEvent.isKey(KeyCode.ENTER)) {
-                processListView.setFiltering(false);
-            } else if (keyEvent.code() == KeyCode.CHAR && keyEvent.codePoint() != 0) {
-                processListView.appendFilterChar((char) keyEvent.codePoint());
-            }
-            return;
-        }
-
-        if (keyEvent.isChar('/')) {
-            processListView.setFiltering(true);
-        } else if (keyEvent.isKey(KeyCode.UP)) {
-            processListView.moveSelectionUp();
-        } else if (keyEvent.isKey(KeyCode.DOWN)) {
-            processListView.moveSelectionDown();
-        } else if (keyEvent.isKey(KeyCode.ENTER)) {
-            JvmProcess selected = processListView.getSelectedProcess();
-            if (selected != null) {
-                attachToProcess(selected);
-            }
-        }
-    }
-
-    private void handleDashboardKeys(KeyEvent keyEvent) {
-        if (keyEvent.isChar('s')) {
-            switchView(ViewState.THREADS);
-            threadView.cycleSort();
-        } else if (keyEvent.isChar('v')) {
-            switchView(ViewState.THREADS);
-            threadView.toggleVirtualOnly();
-        }
-    }
-
-    private void handleThreadKeys(KeyEvent keyEvent) {
-        if (keyEvent.isKey(KeyCode.UP)) {
-            threadView.moveSelectionUp();
-        } else if (keyEvent.isKey(KeyCode.DOWN)) {
-            threadView.moveSelectionDown(threadView.getFilteredThreadCount(currentMetrics));
-        } else if (keyEvent.isChar('s')) {
-            threadView.cycleSort();
-        } else if (keyEvent.isChar('v')) {
-            threadView.toggleVirtualOnly();
-        } else if (keyEvent.isKey(KeyCode.ENTER)) {
-            threadView.toggleStackTraceModal();
-        }
-    }
-
-    private void handleGcKeys(KeyEvent keyEvent) {
-        if (keyEvent.isChar('g') || keyEvent.isChar('G')) {
-            if (monitorService != null) {
-                monitorService.triggerGc();
-            }
-        } else if (keyEvent.isChar('d') || keyEvent.isChar('D')) {
-            gcView.toggleHeapDumpOnOom();
-            if (monitorService != null) {
-                monitorService.setVmOption("HeapDumpOnOutOfMemoryError", gcView.isHeapDumpOnOom() ? "true" : "false");
-            }
-        } else if (keyEvent.isChar('+') || keyEvent.isChar('=')) {
-            gcView.adjustMaxHeapFreeRatio(5);
-            if (monitorService != null) {
-                monitorService.setVmOption("MaxHeapFreeRatio", String.valueOf(gcView.getMaxHeapFreeRatio()));
-            }
-        } else if (keyEvent.isChar('-') || keyEvent.isChar('_')) {
-            gcView.adjustMaxHeapFreeRatio(-5);
-            if (monitorService != null) {
-                monitorService.setVmOption("MaxHeapFreeRatio", String.valueOf(gcView.getMaxHeapFreeRatio()));
-            }
-        }
-    }
-
-    private void handleJvmInfoKeys(KeyEvent keyEvent) {
-        // JVM Info view key handling
-    }
-
-    private void handleJfrEventsKeys(KeyEvent keyEvent) {
-        if (keyEvent.isKey(KeyCode.UP)) {
-            jfrEventsView.moveSelectionUp();
-        } else if (keyEvent.isKey(KeyCode.DOWN)) {
-            jfrEventsView.moveSelectionDown(jfrEventsView.getFilteredEventCount());
-        } else if (keyEvent.isChar('f') || keyEvent.isChar('F')) {
-            jfrEventsView.cycleCategory();
-        } else if (keyEvent.isChar('s') || keyEvent.isChar('S')) {
-            jfrEventsView.toggleSortDuration();
-        } else if (keyEvent.isKey(KeyCode.ENTER)) {
-            jfrEventsView.toggleEventModal();
-        }
-    }
-
-    private void handleFrameworkKeys(KeyEvent keyEvent) {
-        if (keyEvent.isKey(KeyCode.UP)) {
-            frameworkView.moveSelectionUp();
-        } else if (keyEvent.isKey(KeyCode.DOWN)) {
-            frameworkView.moveSelectionDown();
-        } else if (keyEvent.isKey(KeyCode.ENTER)) {
-            String logRes = frameworkView.cycleSelectedLogLevel();
-            if (logRes != null) {
-                this.connectionStatusMessage = "Updated logger level: " + logRes;
-            }
-        }
-    }
 
     @Override
     public void render(Frame frame) {
@@ -432,15 +350,9 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
     }
 
     private void renderActiveViewContent(Rect area, Buffer buffer) {
-        switch (activeView) {
-            case PROCESS_LIST -> processListView.render(area, buffer);
-            case DASHBOARD -> dashboardView.render(area, buffer, currentProcess, currentMetrics, currentHistory, currentTheme);
-            case THREADS -> threadView.render(area, buffer, currentProcess, currentMetrics, monitorService);
-            case GC -> gcView.render(area, buffer, currentProcess, currentMetrics, currentHistory);
-            case JVM_INFO -> jvmInfoView.render(area, buffer, currentProcess, currentMetrics);
-            case JFR_EVENTS -> jfrEventsView.render(area, buffer, currentProcess, currentMetrics);
-            case FRAMEWORK -> frameworkView.render(area, buffer, currentProcess, currentMetrics, currentTheme);
-        }
+        var ctx = buildContext(lastTabsWidget, tabsState);
+        var view = views.get(activeView);
+        if (view != null) view.render(area, buffer, ctx);
     }
 
     private void renderTuningModal(Rect area, Buffer buffer) {
@@ -489,7 +401,7 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
     private void renderTopBarHeader(Rect area, Buffer buffer) {
         String timeStr = LocalTime.now().format(TIME_FMT);
         String procStr = currentProcess != null
-            ? (currentProcess.pid() > 0 ? String.format("PID %d (%s)", currentProcess.pid(), truncate(currentProcess.mainClass(), 25)) : currentProcess.displayName())
+            ? (currentProcess.pid() > 0 ? String.format("PID %d (%s)", currentProcess.pid(), UiFormatter.truncate(currentProcess.mainClass(), 25)) : currentProcess.displayName())
             : "No Target PID";
 
         long pollMs = monitorService != null ? monitorService.getLastPollLatencyMs() : 0;
@@ -514,13 +426,14 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
             .block(topBlock)
             .build();
 
+        lastTabsWidget = tabsWidget;
         tabsWidget.render(area, buffer, tabsState);
     }
 
     private void renderBottomControlBar(Rect area, Buffer buffer) {
         if (connectionStatusMessage != null) {
             Paragraph para = Paragraph.builder()
-                .text(" " + Glyph.alertIcon() + " " + truncate(connectionStatusMessage, 80))
+                .text(" " + Glyph.alertIcon() + " " + UiFormatter.truncate(connectionStatusMessage, 80))
                 .style(Style.create().bg(Color.RED).fg(Color.BRIGHT_WHITE).addModifier(Modifier.BOLD))
                 .build();
             para.render(area, buffer);
@@ -546,11 +459,6 @@ public class JTopApp implements EventHandler, Renderer, AutoCloseable {
         para.render(area, buffer);
     }
 
-    private String truncate(String val, int max) {
-        if (val == null) return "";
-        if (val.length() <= max) return val;
-        return val.substring(0, max - 3) + "...";
-    }
 
     @Override
     public void close() {

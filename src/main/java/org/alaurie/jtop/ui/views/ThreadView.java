@@ -13,10 +13,15 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
 import org.alaurie.jtop.model.JvmMetricsSnapshot;
 import org.alaurie.jtop.model.JvmProcess;
 import org.alaurie.jtop.model.ThreadSnapshot;
 import org.alaurie.jtop.service.JvmMonitorService;
+import org.alaurie.jtop.ui.JTopApp;
+import org.alaurie.jtop.ui.style.Theme;
+import org.alaurie.jtop.ui.style.UiFormatter;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -24,9 +29,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
-
 /// Detailed Btop-style Thread Inspector view with dynamic stack trace inspector modal filling 100% available height.
-public class ThreadView {
+public class ThreadView implements View {
 
     private final TableState tableState = new TableState();
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -251,19 +255,37 @@ public class ThreadView {
         return (int) metrics.threads().stream().filter(ThreadSnapshot::isVirtual).count();
     }
 
-    private Style getThreadStateStyle(Thread.State state) {
-        return switch (state) {
-            case RUNNABLE -> Style.create().fg(Color.GREEN);
-            case WAITING -> Style.create().fg(Color.GRAY);
-            case TIMED_WAITING -> Style.create().fg(Color.CYAN);
-            case BLOCKED -> Style.create().bg(Color.RED).fg(Color.BRIGHT_WHITE).addModifier(Modifier.BOLD);
-            default -> Style.create().fg(Color.GRAY);
-        };
+    Style getThreadStateStyle(Thread.State state) {
+        return UiFormatter.getThreadStateStyle(state, Theme.BTOP);
     }
 
     private String truncate(String val, int max) {
-        if (val == null) return "";
-        if (val.length() <= max) return val;
-        return val.substring(0, max - 3) + "...";
+        return UiFormatter.truncate(val, max);
+    }
+
+    @Override
+    public void render(Rect area, Buffer buffer, ViewContext context) {
+        render(area, buffer, context.currentProcess(), context.currentMetrics(), context.monitorService());
+    }
+
+    @Override
+    public boolean handleKey(KeyEvent keyEvent, ViewContext context, JTopApp app) {
+        if (keyEvent.isKey(KeyCode.UP)) {
+            moveSelectionUp();
+            return true;
+        } else if (keyEvent.isKey(KeyCode.DOWN)) {
+            moveSelectionDown(getFilteredThreadCount(context.currentMetrics()));
+            return true;
+        } else if (keyEvent.isChar('s')) {
+            cycleSort();
+            return true;
+        } else if (keyEvent.isChar('v')) {
+            toggleVirtualOnly();
+            return true;
+        } else if (keyEvent.isKey(KeyCode.ENTER)) {
+            toggleStackTraceModal();
+            return true;
+        }
+        return false;
     }
 }

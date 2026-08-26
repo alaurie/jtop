@@ -16,17 +16,19 @@ import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import dev.tamboui.widgets.tabs.Tabs;
 import dev.tamboui.widgets.tabs.TabsState;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
 import org.alaurie.jtop.model.*;
+import org.alaurie.jtop.ui.JTopApp;
+import org.alaurie.jtop.ui.style.UiFormatter;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Detailed Garbage Collection and Memory Pool view with inline live GC tuning controls and full-width pause history sparklines.
- */
-public class GcView {
+/// Detailed Garbage Collection and Memory Pool view implementing the deep View seam.
+public class GcView implements View {
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
     private final TableState gcTableState = new TableState();
@@ -49,6 +51,34 @@ public class GcView {
 
     public int getMaxHeapFreeRatio() {
         return maxHeapFreeRatio;
+    }
+
+    @Override
+    public void render(Rect area, Buffer buffer, ViewContext ctx) {
+        render(area, buffer, ctx.currentProcess(), ctx.currentMetrics(), ctx.currentHistory());
+    }
+
+    @Override
+    public boolean handleKey(KeyEvent keyEvent, ViewContext ctx, JTopApp app) {
+        var monitorService = ctx.monitorService();
+        if (keyEvent.isChar('g') || keyEvent.isChar('G')) {
+            if (monitorService != null) monitorService.triggerGc();
+        } else if (keyEvent.isChar('d') || keyEvent.isChar('D')) {
+            toggleHeapDumpOnOom();
+            if (monitorService != null)
+                monitorService.setVmOption("HeapDumpOnOutOfMemoryError", heapDumpOnOom ? "true" : "false");
+        } else if (keyEvent.isChar('+') || keyEvent.isChar('=')) {
+            adjustMaxHeapFreeRatio(5);
+            if (monitorService != null)
+                monitorService.setVmOption("MaxHeapFreeRatio", String.valueOf(maxHeapFreeRatio));
+        } else if (keyEvent.isChar('-') || keyEvent.isChar('_')) {
+            adjustMaxHeapFreeRatio(-5);
+            if (monitorService != null)
+                monitorService.setVmOption("MaxHeapFreeRatio", String.valueOf(maxHeapFreeRatio));
+        } else {
+            return false;
+        }
+        return true;
     }
 
     public void render(Rect area, Buffer buffer, JvmProcess process, JvmMetricsSnapshot metrics, MetricHistory history) {
@@ -179,9 +209,9 @@ public class GcView {
                 String usageBar = makeProgressBar(pool.usagePercentage(), 15);
                 poolRows.add(Row.from(
                     Cell.from(pool.name()),
-                    Cell.from(formatBytes(pool.used())),
-                    Cell.from(formatBytes(pool.committed())),
-                    Cell.from(pool.max() > 0 ? formatBytes(pool.max()) : "N/A"),
+                    Cell.from(UiFormatter.formatBytes(pool.used())),
+                    Cell.from(UiFormatter.formatBytes(pool.committed())),
+                    Cell.from(pool.max() > 0 ? UiFormatter.formatBytes(pool.max()) : "N/A"),
                     Cell.from(String.format("%.1f%%", pool.usagePercentage())),
                     Cell.from(usageBar)
                 ));
@@ -213,8 +243,8 @@ public class GcView {
                 rows.add(Row.from(
                     Cell.from(pool.name()),
                     Cell.from(String.valueOf(pool.count())),
-                    Cell.from(formatBytes(pool.memoryUsed())),
-                    Cell.from(pool.totalCapacity() > 0 ? formatBytes(pool.totalCapacity()) : "N/A")
+                    Cell.from(UiFormatter.formatBytes(pool.memoryUsed())),
+                    Cell.from(pool.totalCapacity() > 0 ? UiFormatter.formatBytes(pool.totalCapacity()) : "N/A")
                 ));
             }
         }
@@ -237,14 +267,8 @@ public class GcView {
     }
 
     private String makeProgressBar(double pct, int width) {
-        int filled = (int) Math.round(Math.min(100, Math.max(0, pct)) / 100.0 * width);
-        return "[" + "█".repeat(filled) + "░".repeat(Math.max(0, width - filled)) + "]";
+        return UiFormatter.makeProgressBar(pct, width);
     }
 
-    private String formatBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        int exp = (int) (Math.log(bytes) / Math.log(1024));
-        char pre = "KMGTPE".charAt(exp - 1);
-        return String.format("%.1f %cB", bytes / Math.pow(1024, exp), pre);
-    }
+
 }

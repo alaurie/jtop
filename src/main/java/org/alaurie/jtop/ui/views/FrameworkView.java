@@ -14,11 +14,12 @@ import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
-import dev.tamboui.widgets.tabs.Tabs;
-import dev.tamboui.widgets.tabs.TabsState;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
 import org.alaurie.jtop.model.FrameworkInfo;
 import org.alaurie.jtop.model.JvmMetricsSnapshot;
 import org.alaurie.jtop.model.JvmProcess;
+import org.alaurie.jtop.ui.JTopApp;
 import org.alaurie.jtop.ui.style.Theme;
 
 import java.util.ArrayList;
@@ -26,10 +27,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * View inspecting Spring Boot, Quarkus, HikariCP, and Agroal framework telemetry with live interactive logger level tuning.
- */
-public class FrameworkView {
+/// View inspecting Spring Boot, Quarkus, HikariCP, and Agroal framework telemetry implementing the deep View seam.
+public class FrameworkView implements View {
+
+    private volatile String lastStatusMessage = null;
 
     private final TableState logTableState = new TableState();
     private final Map<String, String> loggerLevels = new HashMap<>();
@@ -76,6 +77,33 @@ public class FrameworkView {
             return cat + " -> " + next;
         }
         return null;
+    }
+
+    @Override
+    public void render(Rect area, Buffer buffer, ViewContext ctx) {
+        render(area, buffer, ctx.currentProcess(), ctx.currentMetrics(), ctx.currentTheme());
+    }
+
+    @Override
+    public boolean handleKey(KeyEvent keyEvent, ViewContext ctx, JTopApp app) {
+        if (keyEvent.isKey(KeyCode.UP)) {
+            moveSelectionUp();
+        } else if (keyEvent.isKey(KeyCode.DOWN)) {
+            moveSelectionDown();
+        } else if (keyEvent.isKey(KeyCode.ENTER)) {
+            String result = cycleSelectedLogLevel();
+            if (result != null) lastStatusMessage = "Updated logger level: " + result;
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    /// Returns and clears the last status message produced by key handling.
+    public String pollStatusMessage() {
+        var msg = lastStatusMessage;
+        lastStatusMessage = null;
+        return msg;
     }
 
     public void render(Rect area, Buffer buffer, JvmProcess process, JvmMetricsSnapshot metrics, Theme theme) {

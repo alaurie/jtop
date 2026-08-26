@@ -15,6 +15,10 @@ import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import org.alaurie.jtop.model.JvmMetricsSnapshot;
 import org.alaurie.jtop.model.JvmProcess;
+import org.alaurie.jtop.ui.JTopApp;
+import org.alaurie.jtop.ui.style.UiFormatter;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -24,9 +28,9 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Interactive JDK Flight Recorder (JFR) Event Stream view with stack trace modal inspection, category filters, and duration sorting.
+ * Interactive JDK Flight Recorder (JFR) Event Stream view implementing the deep View seam.
  */
-public class JfrEventsView {
+public class JfrEventsView implements View {
 
     public record JfrEventItem(
         long eventId,
@@ -92,6 +96,29 @@ public class JfrEventsView {
 
     public void moveSelectionDown(int count) {
         tableState.selectNext(count);
+    }
+
+    @Override
+    public void render(Rect area, Buffer buffer, ViewContext ctx) {
+        render(area, buffer, ctx.currentProcess(), ctx.currentMetrics());
+    }
+
+    @Override
+    public boolean handleKey(KeyEvent keyEvent, ViewContext ctx, JTopApp app) {
+        if (keyEvent.isKey(KeyCode.UP)) {
+            moveSelectionUp();
+        } else if (keyEvent.isKey(KeyCode.DOWN)) {
+            moveSelectionDown(getFilteredEventCount());
+        } else if (keyEvent.isChar('f') || keyEvent.isChar('F')) {
+            cycleCategory();
+        } else if (keyEvent.isChar('s') || keyEvent.isChar('S')) {
+            toggleSortDuration();
+        } else if (keyEvent.isKey(KeyCode.ENTER)) {
+            toggleEventModal();
+        } else {
+            return false;
+        }
+        return true;
     }
 
     public void render(Rect area, Buffer buffer, JvmProcess process, JvmMetricsSnapshot metrics) {
@@ -243,8 +270,6 @@ public class JfrEventsView {
     }
 
     private String truncate(String val, int max) {
-        if (val == null) return "";
-        if (val.length() <= max) return val;
-        return val.substring(0, max - 3) + "...";
+        return UiFormatter.truncate(val, max);
     }
 }

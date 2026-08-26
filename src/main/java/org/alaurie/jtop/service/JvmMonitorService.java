@@ -3,6 +3,7 @@ package org.alaurie.jtop.service;
 import com.sun.management.OperatingSystemMXBean;
 import com.sun.tools.attach.VirtualMachine;
 import org.alaurie.jtop.model.*;
+import org.alaurie.jtop.service.collector.*;
 
 import javax.management.MBeanServerConnection;
 import javax.management.ObjectName;
@@ -42,14 +43,18 @@ public class JvmMonitorService implements AutoCloseable {
     private List<GarbageCollectorMXBean> gcMxBeans = new ArrayList<>();
     private List<BufferPoolMXBean> bufferPoolMxBeans = new ArrayList<>();
 
-    private final Map<Long, Long> previousThreadCpuTimes = new ConcurrentHashMap<>();
-    private final Map<String, Long> previousGcTimesMs = new ConcurrentHashMap<>();
+    // --- per-poll prev-state (owned by collectors; kept here only for history timing) ---
     private long previousTimestampMs = System.currentTimeMillis();
-    private long previousProcessCpuTimeNs = 0;
     private long previousProcessNanoTime = System.nanoTime();
-    private long previousEdenUsedBytes = 0;
-    private long previousTotalGcTimeMs = 0;
     private long lastPollLatencyMs = 0;
+
+    // --- telemetry collector adapters ---
+    private CpuCollector cpuCollector;
+    private MemoryCollector memoryCollector;
+    private GcCollector gcCollector;
+    private ThreadCollector threadCollector;
+    private RuntimeCollector runtimeCollector;
+    private FrameworkCollector frameworkCollector;
 
     private final List<Double> cpuHistoryBuffer = new CopyOnWriteArrayList<>();
     private final List<Long> heapHistoryBuffer = new CopyOnWriteArrayList<>();
@@ -144,6 +149,16 @@ public class JvmMonitorService implements AutoCloseable {
                 threadMxBean.setThreadContentionMonitoringEnabled(true);
             } catch (Exception ignored) {}
         }
+        // Initialise telemetry collector adapters after MBeans are ready
+        this.cpuCollector       = new CpuCollector(osMxBean);
+        this.memoryCollector    = new MemoryCollector(memoryMxBean, memoryPoolMxBeans);
+        this.gcCollector        = new GcCollector(gcMxBeans, bufferPoolMxBeans);
+        this.threadCollector    = new ThreadCollector(threadMxBean, isSelf);
+        this.runtimeCollector   = new RuntimeCollector(runtimeMxBean, classLoadingMxBean,
+                                      compilationMxBean, osMxBean, isSelf,
+                                      Runtime.getRuntime().availableProcessors());
+        this.frameworkCollector = new FrameworkCollector(mbeanConnection);
+
     }
 
     public boolean isConnected() {
@@ -207,266 +222,48 @@ public class JvmMonitorService implements AutoCloseable {
             throw new IllegalStateException("Target JVM connection lost or process terminated.");
         }
 
-        long startNano = System.nanoTime();
-        long timestamp = System.currentTimeMillis();
-        long currentNanoTime = System.nanoTime();
-        long deltaMs = Math.max(1, timestamp - previousTimestampMs);
-        double deltaSec = deltaMs / 1000.0;
-        long deltaWallNs = Math.max(1, currentNanoTime - previousProcessNanoTime);
+        var startNano = System.nanoTime();
+        var timestamp = System.currentTimeMillis();
+        var currentNano = System.nanoTime();
+        var deltaMs = Math.max(1, timestamp - previousTimestampMs);
+        var deltaSec = deltaMs / 1000.0;
+        var deltaWallNs = Math.max(1, currentNano - previousProcessNanoTime);
         this.previousTimestampMs = timestamp;
-        this.previousProcessNanoTime = currentNanoTime;
+        this.previousProcessNanoTime = currentNano;
 
         try {
-            // CPU Load
-            double processCpu = 0.0;
-            double systemCpu = 0.0;
-            long openFds = 0;
-            long maxFds = 0;
-            long committedVirtualMem = 0;
-            long totalPhysMem = 0;
-            long freePhysMem = 0;
-            long totalSwap = 0;
-            long freeSwap = 0;
-            int processors = Runtime.getRuntime().availableProcessors();
+            var cpu = cpuCollector.collect(deltaWallNs);
+            var mem = memoryCollector.collect(deltaSec);
+            var gc  = gcCollector.collect(deltaMs);
+            var thr = threadCollector.collect(deltaMs);
+            var rt  = runtimeCollector.collect(
+                          cpu.committedVirtualMem(), cpu.totalPhysMem(), cpu.freePhysMem(),
+                          cpu.totalSwap(), cpu.freeSwap(), cpu.openFds(), cpu.maxFds());
+            var fw  = frameworkCollector.collect();
 
-            if (osMxBean != null) {
-                long currentCpuNs = osMxBean.getProcessCpuTime();
-                if (previousProcessCpuTimeNs > 0 && currentCpuNs >= previousProcessCpuTimeNs) {
-                    long deltaCpuNs = currentCpuNs - previousProcessCpuTimeNs;
-                    processCpu = Math.min(100.0, (deltaCpuNs / (double) deltaWallNs) * 100.0);
-                } else {
-                    double rawCpu = osMxBean.getProcessCpuLoad();
-                    processCpu = rawCpu >= 0 ? rawCpu * 100.0 : 0.0;
-                }
-                this.previousProcessCpuTimeNs = currentCpuNs;
-
-                double sysLoad = osMxBean.getCpuLoad();
-                systemCpu = sysLoad >= 0 ? sysLoad * 100.0 : 0.0;
-
-                try {
-                    Method mOpen = osMxBean.getClass().getMethod("getOpenFileDescriptorCount");
-                    openFds = (Long) mOpen.invoke(osMxBean);
-                } catch (Throwable ignored) {}
-                try {
-                    Method mMax = osMxBean.getClass().getMethod("getMaxFileDescriptorCount");
-                    maxFds = (Long) mMax.invoke(osMxBean);
-                } catch (Throwable ignored) {}
-
-                try {
-                    committedVirtualMem = osMxBean.getCommittedVirtualMemorySize();
-                    totalPhysMem = osMxBean.getTotalMemorySize();
-                    freePhysMem = osMxBean.getFreeMemorySize();
-                    totalSwap = osMxBean.getTotalSwapSpaceSize();
-                    freeSwap = osMxBean.getFreeSwapSpaceSize();
-                } catch (Throwable ignored) {}
-            }
-
-            // Memory Usage & Allocation Rate
-            MemoryUsage heapUsage = memoryMxBean != null ? memoryMxBean.getHeapMemoryUsage() : new MemoryUsage(0, 0, 0, 0);
-            MemoryUsage nonHeapUsage = memoryMxBean != null ? memoryMxBean.getNonHeapMemoryUsage() : new MemoryUsage(0, 0, 0, 0);
-
-            long currentEdenBytes = 0;
-            List<MemoryPoolSnapshot> poolSnapshots = new ArrayList<>();
-            for (MemoryPoolMXBean pool : memoryPoolMxBeans) {
-                try {
-                    MemoryUsage u = pool.getUsage();
-                    if (u != null) {
-                        if (pool.getName().toLowerCase().contains("eden")) {
-                            currentEdenBytes = u.getUsed();
-                        }
-                        poolSnapshots.add(new MemoryPoolSnapshot(pool.getName(), u.getUsed(), u.getCommitted(), u.getMax()));
-                    }
-                } catch (Exception ignored) {}
-            }
-
-            if (currentEdenBytes == 0) {
-                currentEdenBytes = heapUsage.getUsed();
-            }
-
-            double allocationRateMbPerSec = 0.0;
-            if (previousEdenUsedBytes > 0 && currentEdenBytes > previousEdenUsedBytes) {
-                long deltaEdenBytes = currentEdenBytes - previousEdenUsedBytes;
-                allocationRateMbPerSec = (deltaEdenBytes / 1024.0 / 1024.0) / deltaSec;
-            }
-            this.previousEdenUsedBytes = currentEdenBytes;
-
-            // GC Snapshots & GC Overhead %
-            List<GcSnapshot> gcSnapshots = new ArrayList<>();
-            long totalGcTime = 0;
-            for (GarbageCollectorMXBean gc : gcMxBeans) {
-                try {
-                    long count = gc.getCollectionCount();
-                    long timeMs = gc.getCollectionTime();
-                    if (timeMs > 0) totalGcTime += timeMs;
-
-                    double pauseRateMsPerSec = 0.0;
-                    Long prevMs = previousGcTimesMs.put(gc.getName(), timeMs);
-                    if (prevMs != null && timeMs > prevMs) {
-                        pauseRateMsPerSec = (timeMs - prevMs) / deltaSec;
-                    }
-
-                    gcSnapshots.add(new GcSnapshot(gc.getName(), Math.max(0, count), Math.max(0, timeMs), "N/A", Math.max(0.0, pauseRateMsPerSec)));
-                } catch (Exception ignored) {}
-            }
-
-            double gcCpuOverheadPct = 0.0;
-            if (previousTotalGcTimeMs > 0 && totalGcTime >= previousTotalGcTimeMs) {
-                long deltaGcTimeMs = totalGcTime - previousTotalGcTimeMs;
-                gcCpuOverheadPct = Math.min(100.0, (deltaGcTimeMs / (double) deltaMs) * 100.0);
-            }
-            this.previousTotalGcTimeMs = totalGcTime;
-
-            // Off-Heap Buffer Pools (Direct & Mapped Memory)
-            List<BufferPoolSnapshot> bufferPoolSnapshots = new ArrayList<>();
-            for (BufferPoolMXBean pool : bufferPoolMxBeans) {
-                try {
-                    bufferPoolSnapshots.add(new BufferPoolSnapshot(
-                        pool.getName(),
-                        pool.getCount(),
-                        pool.getMemoryUsed(),
-                        pool.getTotalCapacity()
-                    ));
-                } catch (Exception ignored) {}
-            }
-
-            // Deadlock Detection
-            List<Long> deadlockedThreadIds = List.of();
-            if (threadMxBean != null) {
-                try {
-                    long[] deadlocked = threadMxBean.findDeadlockedThreads();
-                    if (deadlocked != null && deadlocked.length > 0) {
-                        deadlockedThreadIds = Arrays.stream(deadlocked).boxed().toList();
-                    }
-                } catch (Exception ignored) {}
-            }
-
-            // Threads Telemetry
-            List<ThreadSnapshot> threadList = new ArrayList<>();
-            int platformCount = 0;
-            int virtualCount = 0;
-
-            if (threadMxBean != null) {
-                long[] threadIds = threadMxBean.getAllThreadIds();
-                platformCount = threadIds != null ? threadIds.length : 0;
-
-                if (threadIds != null) {
-                    ThreadInfo[] infos = threadMxBean.getThreadInfo(threadIds, 0);
-                    for (int i = 0; i < threadIds.length; i++) {
-                        long id = threadIds[i];
-                        ThreadInfo info = infos[i];
-                        if (info == null) continue;
-
-                        double threadCpuPct = 0.0;
-                        try {
-                            long cpuTimeNs = threadMxBean.getThreadCpuTime(id);
-                            Long prevNs = previousThreadCpuTimes.put(id, cpuTimeNs);
-                            if (prevNs != null && cpuTimeNs > prevNs) {
-                                double deltaCpuMs = (cpuTimeNs - prevNs) / 1_000_000.0;
-                                threadCpuPct = Math.min(100.0, (deltaCpuMs / deltaMs) * 100.0);
-                            }
-                        } catch (Exception ignored) {}
-
-                        boolean isVirtual = isVirtualThread(info, id);
-                        if (isVirtual) virtualCount++;
-
-                        threadList.add(new ThreadSnapshot(
-                            id,
-                            info.getThreadName(),
-                            info.getThreadState(),
-                            threadCpuPct,
-                            isVirtual,
-                            info.isDaemon(),
-                            info.getLockName(),
-                            info.getLockOwnerName(),
-                            List.of()
-                        ));
-                    }
-                }
-            }
-
-            // Runtime, System Specs & JIT Info
-            JvmRuntimeInfo runtimeInfo = null;
-            if (runtimeMxBean != null) {
-                long loadedClasses = classLoadingMxBean != null ? classLoadingMxBean.getLoadedClassCount() : 0;
-                long totalLoadedClasses = classLoadingMxBean != null ? classLoadingMxBean.getTotalLoadedClassCount() : 0;
-                long unloadedClasses = classLoadingMxBean != null ? classLoadingMxBean.getUnloadedClassCount() : 0;
-
-                String compilerName = compilationMxBean != null ? compilationMxBean.getName() : "HotSpot JIT";
-                long compilationTime = compilationMxBean != null && compilationMxBean.isCompilationTimeMonitoringSupported()
-                    ? compilationMxBean.getTotalCompilationTime() : 0;
-
-                Map<String, String> sysProps = new HashMap<>();
-                try {
-                    if (isSelf) {
-                        System.getProperties().forEach((k, v) -> sysProps.put(String.valueOf(k), String.valueOf(v)));
-                    } else {
-                        runtimeMxBean.getSystemProperties().forEach((k, v) -> sysProps.put(String.valueOf(k), String.valueOf(v)));
-                    }
-                } catch (Throwable ignored) {}
-
-                runtimeInfo = new JvmRuntimeInfo(
-                    runtimeMxBean.getVmName(),
-                    runtimeMxBean.getVmVendor(),
-                    runtimeMxBean.getVmVersion(),
-                    runtimeMxBean.getSpecVersion(),
-                    runtimeMxBean.getStartTime(),
-                    runtimeMxBean.getUptime(),
-                    runtimeMxBean.getInputArguments(),
-                    sysProps,
-                    loadedClasses,
-                    totalLoadedClasses,
-                    unloadedClasses,
-                    compilerName,
-                    compilationTime,
-                    processors,
-                    osMxBean != null ? osMxBean.getName() : System.getProperty("os.name"),
-                    osMxBean != null ? osMxBean.getArch() : System.getProperty("os.arch"),
-                    committedVirtualMem,
-                    totalPhysMem,
-                    freePhysMem,
-                    totalSwap,
-                    freeSwap,
-                    openFds,
-                    maxFds
-                );
-            }
-
-            // Framework Telemetry (Spring Boot / Quarkus / HikariCP / Agroal MBeans)
-            FrameworkInfo frameworkInfo = pollFrameworkTelemetry();
-
-            // Update history buffers using Java 25 Gatherers.windowSliding
-            updateHistory(processCpu, heapUsage.getUsed(), totalGcTime);
-
+            long totalGcTimeMs = gc.gcSnapshots().stream()
+                .mapToLong(GcSnapshot::collectionTimeMs).sum();
+            updateHistory(cpu.processCpuPct(), mem.heap().getUsed(), totalGcTimeMs);
             this.lastPollLatencyMs = (System.nanoTime() - startNano) / 1_000_000;
             this.consecutiveFailures = 0;
 
             return new JvmMetricsSnapshot(
                 timestamp,
-                processCpu,
-                systemCpu,
-                heapUsage.getUsed(),
-                heapUsage.getMax(),
-                nonHeapUsage.getUsed(),
-                poolSnapshots,
-                gcSnapshots,
-                platformCount,
-                virtualCount,
-                threadList,
-                runtimeInfo,
-                Math.max(0.0, allocationRateMbPerSec),
-                bufferPoolSnapshots,
-                deadlockedThreadIds,
-                Math.max(0.0, gcCpuOverheadPct),
-                frameworkInfo
+                cpu.processCpuPct(), cpu.systemCpuPct(),
+                mem.heap().getUsed(), mem.heap().getMax(), mem.nonHeap().getUsed(),
+                mem.pools(), gc.gcSnapshots(),
+                thr.platformCount(), thr.virtualCount(), thr.threads(),
+                rt,
+                mem.allocRateMbPerSec(), gc.bufferPools(),
+                thr.deadlockedIds(), gc.gcCpuOverheadPct(), fw
             );
         } catch (Throwable t) {
             this.consecutiveFailures++;
-            if (this.consecutiveFailures >= 3) {
-                this.connected = false;
-            }
+            if (this.consecutiveFailures >= 3) this.connected = false;
             throw new IllegalStateException("MBean polling exception: " + t.getMessage(), t);
         }
     }
+
 
     public String generateHeapDump(String targetFilePath) {
         try {
@@ -585,57 +382,6 @@ public class JvmMonitorService implements AutoCloseable {
         } catch (Throwable ignored) {}
     }
 
-    private FrameworkInfo pollFrameworkTelemetry() {
-        if (mbeanConnection == null) return new FrameworkInfo("Vanilla", "JDK 25", 0, 0, 0, 0, 0, Map.of());
-
-        String type = "Vanilla";
-        String ver = "JDK 25";
-        int activeDb = 0;
-        int maxDb = 0;
-        int waitingDb = 0;
-        int activeHttp = 0;
-        int maxHttp = 0;
-
-        try {
-            Set<ObjectName> springNames = mbeanConnection.queryNames(new ObjectName("org.springframework.boot:*"), null);
-            Set<ObjectName> hikariNames = mbeanConnection.queryNames(new ObjectName("com.zaxxer.hikari:*"), null);
-
-            if (!springNames.isEmpty() || !hikariNames.isEmpty()) {
-                type = "Spring Boot";
-                ver = "3.x";
-
-                for (ObjectName name : hikariNames) {
-                    try {
-                        Object activeObj = mbeanConnection.getAttribute(name, "ActiveConnections");
-                        Object waitingObj = mbeanConnection.getAttribute(name, "ThreadsAwaitingConnection");
-                        Object totalObj = mbeanConnection.getAttribute(name, "TotalConnections");
-                        if (activeObj instanceof Integer i) activeDb += i;
-                        if (waitingObj instanceof Integer i) waitingDb += i;
-                        if (totalObj instanceof Integer i) maxDb += i;
-                    } catch (Throwable ignored) {}
-                }
-            }
-
-            Set<ObjectName> quarkusNames = mbeanConnection.queryNames(new ObjectName("io.quarkus:*"), null);
-            Set<ObjectName> agroalNames = mbeanConnection.queryNames(new ObjectName("io.agroal:*"), null);
-
-            if (!quarkusNames.isEmpty() || !agroalNames.isEmpty()) {
-                type = "Quarkus";
-                ver = "3.x";
-
-                for (ObjectName name : agroalNames) {
-                    try {
-                        Object activeObj = mbeanConnection.getAttribute(name, "ActiveCount");
-                        Object maxObj = mbeanConnection.getAttribute(name, "MaxCapacity");
-                        if (activeObj instanceof Long l) activeDb += l.intValue();
-                        if (maxObj instanceof Integer i) maxDb += i;
-                    } catch (Throwable ignored) {}
-                }
-            }
-        } catch (Throwable ignored) {}
-
-        return new FrameworkInfo(type, ver, activeDb, maxDb, waitingDb, activeHttp, maxHttp, Map.of());
-    }
 
     public List<String> fetchThreadStackTrace(long threadId) {
         if (threadMxBean == null || !isConnected()) return List.of();
@@ -660,18 +406,6 @@ public class JvmMonitorService implements AutoCloseable {
         } catch (Exception ignored) {}
     }
 
-    private boolean isVirtualThread(ThreadInfo info, long threadId) {
-        if (info == null) return false;
-        if (isSelf) {
-            for (Thread t : Thread.getAllStackTraces().keySet()) {
-                if (t.threadId() == threadId) {
-                    return t.isVirtual();
-                }
-            }
-        }
-        String name = info.getThreadName();
-        return name != null && (name.contains("VirtualThread") || name.startsWith("virtual-") || name.startsWith("unparker-"));
-    }
 
     private synchronized void updateHistory(double cpu, long heapUsed, long gcTime) {
         cpuHistoryBuffer.add(cpu);
